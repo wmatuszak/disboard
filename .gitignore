@@ -1,0 +1,6 @@
+bin/
+obj/
+
+sounds/*
+!sounds/airhorn.mp3
+!sounds/johncena.mp3
