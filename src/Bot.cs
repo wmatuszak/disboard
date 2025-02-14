@@ -5,7 +5,7 @@ using DSharpPlus.CommandsNext;
 using DSharpPlus.Interactivity;
 using DSharpPlus.Interactivity.Extensions;
 using DSharpPlus.VoiceNext;
-using disboard;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace disboard
 {
@@ -33,19 +33,26 @@ namespace disboard
                 Timeout = TimeSpan.FromMinutes(1)
             });
 
+            SoundService = new SoundService(Client);
+            SoundService.LoadSounds("/sounds");
+
+            var services = new ServiceCollection()
+                .AddSingleton(SoundService)
+                .AddSingleton<CommandHandler>()
+                .BuildServiceProvider();
+
             var commandsConfig = new CommandsNextConfiguration
             {
                 StringPrefixes = new[] { "!" },
                 EnableDms = false,
-                EnableMentionPrefix = true
+                EnableMentionPrefix = true,
+                Services = services
             };
 
             Commands = Client.UseCommandsNext(commandsConfig);
-            Commands.RegisterCommands<CommandHandler>();
 
-            // Initialize and load sounds
-            SoundService = new SoundService();
-            SoundService.LoadSounds("/sounds");
+            // Register commands
+            Commands.RegisterCommands<CommandHandler>();
 
             // Log loaded sounds
             foreach (var sound in SoundService.GetAllSounds())

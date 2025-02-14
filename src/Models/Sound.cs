@@ -11,6 +11,7 @@ namespace disboard
         public double Duration { get; set; } // Duration in seconds
         public long FileSize { get; set; } // File size in bytes
         public string Format { get; set; } // File format (e.g., mp3, wav)
+        public MemoryStream CachedStream { get; set; } // Cached converted stream
 
         public Sound(string name, string path)
         {
@@ -20,6 +21,7 @@ namespace disboard
             FileSize = new FileInfo(path).Length;
             Format = System.IO.Path.GetExtension(path).TrimStart('.');
             Duration = GetAudioDuration(path);
+            CachedStream = new MemoryStream();
         }
 
         private string ExtractCategory(string name)

@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 WORKDIR /app
 RUN apt update
-RUN apt install libopus0 libopus-dev -y
+RUN apt install ffmpeg libopus0 libopus-dev libsodium23 libsodium-dev -y
 
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
