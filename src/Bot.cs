@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using DSharpPlus;
 using DSharpPlus.CommandsNext;
@@ -14,18 +16,23 @@ namespace disboard
         public DiscordClient Client { get; private set; }
         public CommandsNextExtension Commands { get; private set; }
         public SoundService SoundService { get; private set; }
+        private BotConfig _config;
 
         public async Task RunAsync()
         {
-            var config = new DiscordConfiguration
+            // Read configuration file
+            var configJson = await File.ReadAllTextAsync("/config/config.json");
+            _config = JsonSerializer.Deserialize<BotConfig>(configJson);
+
+            var discordConfig = new DiscordConfiguration
             {
-                Token = "",
+                Token = _config.Token,
                 TokenType = TokenType.Bot,
                 AutoReconnect = true,
                 Intents = DiscordIntents.All
             };
 
-            Client = new DiscordClient(config);
+            Client = new DiscordClient(discordConfig);
             Client.UseVoiceNext();
 
             Client.UseInteractivity(new InteractivityConfiguration
