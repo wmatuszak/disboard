@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using DSharpPlus;
 using DSharpPlus.Entities;
@@ -14,11 +16,17 @@ namespace disboard
     {
         private readonly Dictionary<string, Sound> _sounds;
         private readonly DiscordClient _client;
+        private readonly ConcurrentQueue<(DiscordGuild, DiscordUser, string)> _soundQueue;
+        private readonly SemaphoreSlim _queueSemaphore;
+        private bool _isPlaying;
 
         public SoundService(DiscordClient client)
         {
             _client = client;
             _sounds = new Dictionary<string, Sound>();
+            _soundQueue = new ConcurrentQueue<(DiscordGuild, DiscordUser, string)>();
+            _queueSemaphore = new SemaphoreSlim(1, 1);
+            _isPlaying = false;
         }
 
         public void LoadSounds(string directory = "/sounds")
@@ -63,11 +71,42 @@ namespace disboard
             return _sounds.Values.Where(sound => sound.Category == category);
         }
 
-        public async Task PlaySoundAsync(DiscordGuild guild, DiscordUser user, string soundName)
+        public void EnqueueSound(DiscordGuild guild, DiscordUser user, string soundName)
         {
             if (_client == null || guild == null || user == null || !_sounds.ContainsKey(soundName))
                 return;
 
+            _soundQueue.Enqueue((guild, user, soundName));
+            ProcessQueue();
+        }
+
+        private async void ProcessQueue()
+        {
+            await _queueSemaphore.WaitAsync();
+
+            try
+            {
+                if (_isPlaying)
+                    return;
+
+                _isPlaying = true;
+
+                while (_soundQueue.TryDequeue(out var item))
+                {
+                    var (guild, user, soundName) = item;
+                    await PlaySoundAsync(guild, user, soundName);
+                }
+
+                _isPlaying = false;
+            }
+            finally
+            {
+                _queueSemaphore.Release();
+            }
+        }
+
+        private async Task PlaySoundAsync(DiscordGuild guild, DiscordUser user, string soundName)
+        {
             var sound = _sounds[soundName];
             var voiceNext = _client.GetVoiceNext();
             var connection = voiceNext.GetConnection(guild);
