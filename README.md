@@ -8,12 +8,14 @@ This project is a Discord bot that functions as a soundboard with a button-based
 disboard
 ├── src
 │   ├── Bot.cs
+│   ├── BotConfig.cs
 │   ├── UI
-│   │   └── ButtonHandler.cs
+│   │   └── CommandHandler.cs
 │   ├── Services
 │   │   └── SoundService.cs
 │   └── Models
 │       └── Sound.cs
+├── Program.cs
 ├── Dockerfile
 ├── disboard.csproj
 └── README.md
@@ -34,19 +36,37 @@ disboard
 
 3. **Run the Docker container:**
    ```
-   docker run -d disboard
+   docker run -d --name disboard-bot -v /path/to/config:/config -v /path/to/sounds:/sounds disboard
    ```
+
+## Configuration
+The bot uses a JSON configuration file located at config.json. Here is an example file:
+```
+{
+    "Token": "YOUR_BOT_TOKEN_HERE",
+    "InactivityTimeoutSeconds": 60,
+    "VoiceChannelTimeoutMinutes": 10,
+    "CommandPrefix": "!",
+    "Activity": "Playing sounds"
+}
+```
+
 
 ## Usage
 
 - Invite the bot to your Discord server using the OAuth2 URL generated in the Discord Developer Portal.
+- Join a voice channel.
+- Send the command "!soundboard" in a text channel the bot can see.
 - Use the button interface to play sounds by clicking the corresponding buttons.
 
 ## Features
 
 - Button-based UI for easy sound playback.
 - Supports multiple sound files.
-- Easy to extend with additional sounds and functionalities.
+- Configurable inactivity timeout.
+- Configurable voice channel timeout.
+- Configurable command prefix.
+- Configurable activity status.
 
 ## Contributing
 

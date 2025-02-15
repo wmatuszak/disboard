@@ -210,7 +210,7 @@ namespace disboard
                 await interaction.CreateResponseAsync(InteractionResponseType.DeferredMessageUpdate);
                 await ShowSoundPage(interaction, selectedCategory, 0);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Ignore exceptions when sending the response. The soundboard will still display.
                 // Redundant controls will send redundant responses and fail causing double messages.
@@ -228,7 +228,7 @@ namespace disboard
                     await interaction.CreateResponseAsync(InteractionResponseType.DeferredMessageUpdate);
                     _soundService.EnqueueSound(interaction.Guild, interaction.User, soundName);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     // Ignore exceptions when sending the response. The sound will still play.
                     // Redundant controls will send redundant responses and fail causing double playback.

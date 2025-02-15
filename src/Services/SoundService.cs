@@ -18,6 +18,7 @@ namespace disboard
         private readonly DiscordClient _client;
         private readonly ConcurrentQueue<(DiscordGuild, DiscordUser, string)> _soundQueue;
         private readonly SemaphoreSlim _queueSemaphore;
+        private readonly Dictionary<ulong, bool> _playingSounds;
         private bool _isPlaying;
 
         public SoundService(DiscordClient client)
@@ -26,6 +27,7 @@ namespace disboard
             _sounds = new Dictionary<string, Sound>();
             _soundQueue = new ConcurrentQueue<(DiscordGuild, DiscordUser, string)>();
             _queueSemaphore = new SemaphoreSlim(1, 1);
+            _playingSounds = new Dictionary<ulong, bool>();
             _isPlaying = false;
         }
 
@@ -141,6 +143,16 @@ namespace disboard
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
+        }
+
+        public bool IsPlaying(DiscordGuild guild)
+        {
+            return _playingSounds.TryGetValue(guild.Id, out var isPlaying) && isPlaying;
+        }
+
+        public void SetPlaying(DiscordGuild guild, bool isPlaying)
+        {
+            _playingSounds[guild.Id] = isPlaying;
         }
     }
 }
