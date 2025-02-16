@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using DSharpPlus;
@@ -21,12 +22,15 @@ namespace disboard
             _soundService = soundService;
         }
 
-        [Command("soundboard")]
+        [Command("soundboard"), Aliases("sb", "sound")]
         public async Task MenuCommand(CommandContext ctx)
         {
             await ShowCategoryPage(ctx, 0);
+        }
 
-            ctx.Client.ComponentInteractionCreated += async (s, e) =>
+        public async Task OnClientReady(DiscordClient client, ReadyEventArgs e)
+        {
+            client.ComponentInteractionCreated += async (s, e) =>
             {
                 try
                 {
@@ -55,10 +59,41 @@ namespace disboard
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error handling interaction: {ex.Message}");
+                    Console.WriteLine($"Error routing component interaction to proper action: {ex.Message}");
                     Console.WriteLine(ex.StackTrace);
                 }
             };
+        }
+
+        [Command("add")]
+        public async Task AddSoundCommand(CommandContext ctx)
+        {
+            if (ctx.Message.Attachments.Count == 0)
+            {
+                await ctx.RespondAsync("Please attach a file.");
+                return;
+            }
+
+            var attachment = ctx.Message.Attachments[0];
+            var fileExtension = Path.GetExtension(attachment.FileName).ToLower();
+
+            if (fileExtension != ".mp3" && fileExtension != ".wav")
+            {
+                await ctx.RespondAsync("Unsupported file type. Please upload an MP3 or WAV file.");
+                return;
+            }
+
+            var filePath = Path.Combine("/sounds", attachment.FileName);
+
+            using (var client = new System.Net.Http.HttpClient())
+            {
+                var fileBytes = await client.GetByteArrayAsync(attachment.Url);
+                await File.WriteAllBytesAsync(filePath, fileBytes);
+            }
+
+            _soundService.LoadSound(filePath);
+
+            await ctx.RespondAsync($"Sound {attachment.FileName} added successfully.");
         }
 
         private async Task ShowCategoryPage(CommandContext ctx, int page)
@@ -126,7 +161,15 @@ namespace disboard
                 .WithContent("Select a category:")
                 .AddComponents(buttonRows);
 
-            await interaction.CreateResponseAsync(InteractionResponseType.UpdateMessage, builder);
+            try
+            {
+                await interaction.CreateResponseAsync(InteractionResponseType.UpdateMessage, builder);
+            }
+            catch (Exception)
+            {
+                // Ignore exceptions when sending the response.
+                // Redundant controls will send redundant responses and fail causing needless exceptions.
+            }
         }
 
         private async Task ShowSoundPage(DiscordInteraction interaction, string category, int page)
@@ -200,7 +243,15 @@ namespace disboard
                 .WithContent($"Sounds in {category}:")
                 .AddComponents(buttonRows);
 
-            await interaction.CreateResponseAsync(InteractionResponseType.UpdateMessage, builder);
+            try
+            {
+                await interaction.CreateResponseAsync(InteractionResponseType.UpdateMessage, builder);
+            }
+            catch (Exception)
+            {
+                // Ignore exceptions when sending the response.
+                // Redundant controls will send redundant responses and fail causing needless exceptions.
+            }
         }
 
         private async Task HandleCategorySelection(DiscordInteraction interaction, string selectedCategory)
@@ -212,7 +263,9 @@ namespace disboard
             }
             catch (Exception)
             {
-                // Ignore exceptions when sending the response. The soundboard will still display.
+                // Ignore exceptions when sending the response.
+                // Exceptions are often thrown when there are redundant controls present in the chat.
+                // The page will still display if the valid controls are still present.
                 // Redundant controls will send redundant responses and fail causing double messages.
             }
         }
@@ -230,7 +283,9 @@ namespace disboard
                 }
                 catch (Exception)
                 {
-                    // Ignore exceptions when sending the response. The sound will still play.
+                    // Ignore exceptions when sending the response.
+                    // Exceptions are often thrown when there are redundant controls present in the chat.
+                    // The sound will still play if the valid controls are still present.
                     // Redundant controls will send redundant responses and fail causing double playback.
                 }
             }
@@ -243,7 +298,7 @@ namespace disboard
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error handling interaction: {ex.Message}");
+                    Console.WriteLine($"Error handling sound selection: {ex.Message}");
                     Console.WriteLine(ex.StackTrace);
                 }
             }

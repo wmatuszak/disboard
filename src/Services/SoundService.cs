@@ -33,24 +33,30 @@ namespace disboard
 
         public void LoadSounds(string directory = "/sounds")
         {
-            var soundFiles = Directory.GetFiles(directory, "*.mp3");
+            var soundFiles = Directory.GetFiles(directory, "*.*")
+                .Where(file => file.EndsWith(".mp3") || file.EndsWith(".wav"));
 
             foreach (var file in soundFiles)
             {
-                var sound = new Sound(
-                    Path.GetFileNameWithoutExtension(file),
-                    file
-                );
-                _sounds[sound.Name] = sound;
-
-                // Convert and cache the stream
-                using (var ffmpeg = CreateStream(file))
-                using (var output = ffmpeg.StandardOutput.BaseStream)
-                {
-                    output.CopyTo(sound.CachedStream);
-                }
-                sound.CachedStream.Position = 0; // Reset the stream position
+                LoadSound(file);
             }
+        }
+
+        public void LoadSound(string filePath)
+        {
+            var sound = new Sound(
+                Path.GetFileNameWithoutExtension(filePath),
+                filePath
+            );
+            _sounds[sound.Name] = sound;
+
+            // Convert and cache the stream
+            using (var ffmpeg = CreateStream(filePath))
+            using (var output = ffmpeg.StandardOutput.BaseStream)
+            {
+                output.CopyTo(sound.CachedStream);
+            }
+            sound.CachedStream.Position = 0; // Reset the stream position
         }
 
         public string GetSoundPath(string soundName)
@@ -60,17 +66,17 @@ namespace disboard
 
         public IEnumerable<Sound> GetAllSounds()
         {
-            return _sounds.Values;
+            return _sounds.Values.OrderBy(sound => sound.Name);
         }
 
         public IEnumerable<string> GetAllCategories()
         {
-            return _sounds.Values.Select(sound => sound.Category).Distinct();
+            return _sounds.Values.Select(sound => sound.Category).Distinct().OrderBy(category => category);
         }
 
         public IEnumerable<Sound> GetSoundsByCategory(string category)
         {
-            return _sounds.Values.Where(sound => sound.Category == category);
+            return _sounds.Values.Where(sound => sound.Category == category).OrderBy(sound => sound.Name);
         }
 
         public void EnqueueSound(DiscordGuild guild, DiscordUser user, string soundName)

@@ -83,16 +83,14 @@ namespace disboard
                 }
             };
 
-            Client.Ready += OnClientReady;
+            Client.Ready += async (s, e) =>
+            {
+                var commandHandler = services.GetRequiredService<CommandHandler>();
+                await commandHandler.OnClientReady(Client, e);
+            };
 
             await Client.ConnectAsync();
             await Task.Delay(-1);
-        }
-
-        private Task OnClientReady(DiscordClient sender, DSharpPlus.EventArgs.ReadyEventArgs e)
-        {
-            // Set the bot's activity
-            return Client.UpdateStatusAsync(new DiscordActivity(_config.Activity));
         }
     }
 }
