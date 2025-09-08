@@ -1,0 +1,25 @@
+version: '3'
+services:
+disboard:
+  container_name: disboard
+  restart: unless-stopped
+  volumes:
+   - /games/soundboard/sounds:/sounds
+   - /games/soundboard/config:/config
+  image: wmatuszak/disboard:develop
+  depends_on:
+    - lavalink
+    - sounds
+  lavalink:
+   image: ghcr.io/lavalink-devs/lavalink:4
+   restart: unless-stopped
+   environment:
+  - SERVER_PORT=2333
+  - LAVALINK_SERVER_PASSWORD=youshallnotpass
+  - LAVALINK_SERVER_SOURCES_HTTP=true
+  - LAVALINK_SERVER_SOURCES_LOCAL=false
+  sounds:
+   image: nginx:alpine
+   restart: unless-stopped
+   volumes:
+    - /games/soundboard/sounds:/usr/share/nginx/html:ro

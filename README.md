@@ -2,6 +2,8 @@
 
 This project is a Discord bot that functions as a soundboard with a button-based UI system. It allows users to play sounds through a simple interface.
 
+Note: The bot now uses Discord.Net for gateway and interactions. Audio playback is handled by Lavalink (Victoria v7 client), which avoids direct voice issues and improves stability.
+
 ## Project Structure
 
 ```
@@ -34,9 +36,15 @@ disboard
    docker build -t disboard .
    ```
 
-3. **Run the Docker container:**
+3. **Run with Docker Compose (recommended):**
+   See `docker-compose.yaml` which starts:
+   - `lavalink`: Lavalink v4 server on port 2333
+   - `sounds`: nginx static server serving your `/sounds` folder
+   - `disboard`: the bot container
+
+   Update `config/config.json` with your token and Lavalink settings, then:
    ```
-   docker run -d --name disboard-bot -v /path/to/config:/config -v /path/to/sounds:/sounds disboard
+   docker compose up -d
    ```
 
 ## Configuration
@@ -56,8 +64,14 @@ The bot uses a JSON configuration file located at config.json. Here is an exampl
 
 - Invite the bot to your Discord server using the OAuth2 URL generated in the Discord Developer Portal.
 - Join a voice channel.
-- Send the command "!soundboard" in a text channel the bot can see.
+- Send the command `!soundboard` in a text channel the bot can see.
 - Use the button interface to play sounds by clicking the corresponding buttons.
+
+Optional: You can upload new sounds with `!add` by attaching an `.mp3` or `.wav` file; the bot saves and indexes it automatically.
+
+## Lavalink Notes
+- The bot streams local files by URL via the `sounds` service. Ensure `SoundBaseUrl` in `config/config.json` matches the compose service (default `http://sounds`).
+- Lavalink credentials and host are configured in `config/config.json` and should match `docker-compose.yaml`.
 
 ## Features
 

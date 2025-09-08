@@ -3,5 +3,9 @@
     "InactivityTimeoutSeconds": 60,
     "VoiceChannelTimeoutMinutes": 10,
     "CommandPrefix": "!",
-    "Activity": "Playing sounds"
+    "Activity": "Playing sounds",
+    "LavalinkHost": "lavalink",
+    "LavalinkPort": 2333,
+    "LavalinkPassword": "youshallnotpass",
+    "SoundBaseUrl": "http://sounds"
 }
