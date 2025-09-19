@@ -55,10 +55,197 @@ namespace disboard
                         var page = int.Parse(parts.Last());
                         await UpdateSoundPage(component, category, page);
                     }
+                    else if (id.StartsWith("del_start:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        var mb = new ModalBuilder()
+                            .WithTitle("Delete Sound")
+                            .WithCustomId($"del_modal:{intendedUserId}")
+                            .AddTextInput(new TextInputBuilder()
+                                .WithCustomId("filename")
+                                .WithLabel("Sound name (no extension)")
+                                .WithStyle(TextInputStyle.Short)
+                                .WithPlaceholder("e.g. memes_airhorn")
+                                .WithRequired(true)
+                                .WithMaxLength(128));
+                        await component.RespondWithModalAsync(mb.Build());
+                    }
+                    else if (id.StartsWith("del_confirm:"))
+                    {
+                        var parts = id.Split(':');
+                        var intendedUserId = ulong.Parse(parts[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        // Name may contain ':' rarely; use join for remainder after 2nd part
+                        var soundName = string.Join(":", parts.Skip(2));
+                        if (_soundService.TryResolveSound(soundName, out var sound))
+                        {
+                            var ok = _soundService.DeleteSound(sound);
+                            await component.UpdateAsync(m =>
+                            {
+                                m.Content = ok ? $"Deleted '{sound.Name}'." : $"Failed to delete '{sound.Name}'.";
+                                m.Components = new ComponentBuilder().Build();
+                            });
+                        }
+                        else
+                        {
+                            await component.UpdateAsync(m =>
+                            {
+                                m.Content = $"Sound not found.";
+                                m.Components = new ComponentBuilder().Build();
+                            });
+                        }
+                    }
+                    else if (id.StartsWith("del_cancel:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        await component.UpdateAsync(m =>
+                        {
+                            m.Content = "Delete cancelled.";
+                            m.Components = new ComponentBuilder().Build();
+                        });
+                    }
+                    else if (id.StartsWith("ren_start:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        var mb = new ModalBuilder()
+                            .WithTitle("Rename Sound — Pick File")
+                            .WithCustomId($"ren_old_modal:{intendedUserId}")
+                            .AddTextInput(new TextInputBuilder()
+                                .WithCustomId("oldname")
+                                .WithLabel("Existing sound (no extension)")
+                                .WithStyle(TextInputStyle.Short)
+                                .WithPlaceholder("e.g. memes_airhorn")
+                                .WithRequired(true)
+                                .WithMaxLength(128));
+                        await component.RespondWithModalAsync(mb.Build());
+                    }
+                    else if (id.StartsWith("ren_new_button:"))
+                    {
+                        // ren_new_button:{userId}:{resolvedName}
+                        var parts = id.Split(':');
+                        var intendedUserId = ulong.Parse(parts[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        var resolvedName = string.Join(":", parts.Skip(2));
+                        var mb = new ModalBuilder()
+                            .WithTitle($"Rename '{resolvedName}'")
+                            .WithCustomId($"ren_new_modal:{intendedUserId}:{resolvedName}")
+                            .AddTextInput(new TextInputBuilder()
+                                .WithCustomId("newname")
+                                .WithLabel("New name (no extension)")
+                                .WithStyle(TextInputStyle.Short)
+                                .WithPlaceholder("e.g. memes_airhorn2")
+                                .WithRequired(true)
+                                .WithMaxLength(128));
+                        await component.RespondWithModalAsync(mb.Build());
+                    }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error routing component interaction to proper action: {ex.Message}");
+                    Console.WriteLine(ex.StackTrace);
+                }
+            };
+
+            client.ModalSubmitted += async modal =>
+            {
+                try
+                {
+                    var id = modal.Data.CustomId;
+                    if (id.StartsWith("del_modal:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (modal.User.Id != intendedUserId) return;
+                        var filename = modal.Data.Components.First(c => c.CustomId == "filename").Value;
+                        if (_soundService.TryResolveSound(filename, out var sound))
+                        {
+                            var builder = new ComponentBuilder()
+                                .WithButton(new ButtonBuilder
+                                {
+                                    Label = "Confirm Delete",
+                                    CustomId = $"del_confirm:{intendedUserId}:{sound.Name}",
+                                    Style = ButtonStyle.Danger
+                                })
+                                .WithButton(new ButtonBuilder
+                                {
+                                    Label = "Cancel",
+                                    CustomId = $"del_cancel:{intendedUserId}",
+                                    Style = ButtonStyle.Secondary
+                                });
+                            await modal.RespondAsync($"Delete '{sound.Name}'?", components: builder.Build());
+                        }
+                        else
+                        {
+                            var retry = new ComponentBuilder()
+                                .WithButton(new ButtonBuilder
+                                {
+                                    Label = "Enter file name",
+                                    CustomId = $"del_start:{intendedUserId}",
+                                    Style = ButtonStyle.Primary
+                                });
+                            await modal.RespondAsync("Sound not found. Try again:", components: retry.Build());
+                        }
+                    }
+                    else if (id.StartsWith("ren_old_modal:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (modal.User.Id != intendedUserId) return;
+                        var oldname = modal.Data.Components.First(c => c.CustomId == "oldname").Value;
+                        if (_soundService.TryResolveSound(oldname, out var sound))
+                        {
+                            var builder = new ComponentBuilder()
+                                .WithButton(new ButtonBuilder
+                                {
+                                    Label = "Enter new name",
+                                    CustomId = $"ren_new_button:{intendedUserId}:{sound.Name}",
+                                    Style = ButtonStyle.Primary
+                                })
+                                .WithButton(new ButtonBuilder
+                                {
+                                    Label = "Cancel",
+                                    CustomId = $"del_cancel:{intendedUserId}",
+                                    Style = ButtonStyle.Secondary
+                                });
+                            await modal.RespondAsync($"Renaming '{sound.Name}'. Provide a new name:", components: builder.Build());
+                        }
+                        else
+                        {
+                            var retry = new ComponentBuilder()
+                                .WithButton(new ButtonBuilder
+                                {
+                                    Label = "Pick file again",
+                                    CustomId = $"ren_start:{intendedUserId}",
+                                    Style = ButtonStyle.Primary
+                                });
+                            await modal.RespondAsync("Sound not found. Try again:", components: retry.Build());
+                        }
+                    }
+                    else if (id.StartsWith("ren_new_modal:"))
+                    {
+                        // ren_new_modal:{userId}:{resolvedName}
+                        var parts = id.Split(':');
+                        var intendedUserId = ulong.Parse(parts[1]);
+                        if (modal.User.Id != intendedUserId) return;
+                        var resolvedName = string.Join(":", parts.Skip(2));
+                        var newname = modal.Data.Components.First(c => c.CustomId == "newname").Value;
+
+                        if (_soundService.TryResolveSound(resolvedName, out var sound))
+                        {
+                            var ok = _soundService.RenameSound(sound, newname);
+                            await modal.RespondAsync(ok ? $"Renamed to '{System.IO.Path.GetFileNameWithoutExtension(sound.Path)}' → '{newname}'."
+                                                       : "Rename failed (name in use or invalid).");
+                        }
+                        else
+                        {
+                            await modal.RespondAsync("Original sound no longer found.");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Modal handler error: {ex.Message}");
                     Console.WriteLine(ex.StackTrace);
                 }
             };
@@ -93,6 +280,42 @@ namespace disboard
             _soundService.LoadSound(filePath);
 
             await ReplyAsync($"Sound {attachment.Filename} added successfully.");
+        }
+
+        [Command("delete"), Alias("rm", "remove")]
+        public async Task DeleteSoundCommand()
+        {
+            var dm = await Context.User.CreateDMChannelAsync();
+            var builder = new ComponentBuilder()
+                .WithButton(new ButtonBuilder
+                {
+                    Label = "Enter file name",
+                    CustomId = $"del_start:{Context.User.Id}",
+                    Style = ButtonStyle.Primary
+                });
+            await dm.SendMessageAsync("Delete a sound. Click to enter the sound name (no extension).", components: builder.Build());
+            if (Context.Guild != null)
+            {
+                await ReplyAsync("I messaged you to continue the delete.");
+            }
+        }
+
+        [Command("rename"), Alias("mv")]
+        public async Task RenameSoundCommand()
+        {
+            var dm = await Context.User.CreateDMChannelAsync();
+            var builder = new ComponentBuilder()
+                .WithButton(new ButtonBuilder
+                {
+                    Label = "Pick file",
+                    CustomId = $"ren_start:{Context.User.Id}",
+                    Style = ButtonStyle.Primary
+                });
+            await dm.SendMessageAsync("Rename a sound. Click to choose the file (no extension).", components: builder.Build());
+            if (Context.Guild != null)
+            {
+                await ReplyAsync("I messaged you to continue the rename.");
+            }
         }
 
         private async Task ShowCategoryPage(ICommandContext ctx, int page)

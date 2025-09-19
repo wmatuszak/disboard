@@ -69,6 +69,15 @@ The bot uses a JSON configuration file located at config.json. Here is an exampl
 
 Optional: You can upload new sounds with `!add` by attaching an `.mp3` or `.wav` file; the bot saves and indexes it automatically.
 
+### File Management
+
+- `!delete` (`!rm`, `!remove`): Starts a DM with a button that opens a text input to enter the sound name (no extension). If it resolves to an existing sound, you’ll be asked to confirm deletion.
+- `!rename` (`!mv`): Starts a DM. First choose the existing sound via a text input, then provide the new name via a second text input. The file is renamed on disk and the bot’s index is updated.
+
+Notes:
+- Enter names without extensions; category-prefixed names like `memes_airhorn` are supported. If you omit a category and the suffix uniquely matches one sound, it resolves automatically.
+- The bot preserves the original file extension; only the base name changes.
+
 ## Lavalink Notes
 - The bot streams local files by URL via the `sounds` service. Ensure `SoundBaseUrl` in `config/config.json` matches the compose service (default `http://sounds`).
 - Lavalink credentials and host are configured in `config/config.json` and should match `docker-compose.yaml`.

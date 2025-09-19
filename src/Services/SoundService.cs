@@ -57,7 +57,10 @@ namespace disboard
                 Path.GetFileNameWithoutExtension(filePath),
                 filePath
             );
-            _sounds[sound.Name] = sound;
+            lock (_sounds)
+            {
+                _sounds[sound.Name] = sound;
+            }
 
             // Convert and cache the stream only for direct Discord.Net audio
             if (_lavaNode == null)
@@ -73,22 +76,34 @@ namespace disboard
 
         public string GetSoundPath(string soundName)
         {
-            return _sounds.TryGetValue(soundName, out var sound) ? sound.Path : null;
+            lock (_sounds)
+            {
+                return _sounds.TryGetValue(soundName, out var sound) ? sound.Path : null;
+            }
         }
 
         public IEnumerable<Sound> GetAllSounds()
         {
-            return _sounds.Values.OrderBy(sound => sound.Name);
+            lock (_sounds)
+            {
+                return _sounds.Values.OrderBy(sound => sound.Name).ToList();
+            }
         }
 
         public IEnumerable<string> GetAllCategories()
         {
-            return _sounds.Values.Select(sound => sound.Category).Distinct().OrderBy(category => category);
+            lock (_sounds)
+            {
+                return _sounds.Values.Select(sound => sound.Category).Distinct().OrderBy(category => category).ToList();
+            }
         }
 
         public IEnumerable<Sound> GetSoundsByCategory(string category)
         {
-            return _sounds.Values.Where(sound => sound.Category == category).OrderBy(sound => sound.Name);
+            lock (_sounds)
+            {
+                return _sounds.Values.Where(sound => sound.Category == category).OrderBy(sound => sound.Name).ToList();
+            }
         }
 
         public void EnqueueSound(SocketGuild guild, SocketUser user, string soundName)
@@ -344,6 +359,121 @@ namespace disboard
                 {
                     try { await client.StopAsync(); } catch { }
                 }
+            }
+        }
+
+        // --- File management helpers ---
+
+        private static string NormalizeInputName(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return null;
+            var trimmed = input.Trim();
+            // Remove extension if present
+            var nameOnly = Path.GetFileNameWithoutExtension(trimmed);
+            // Disallow path traversal / separators
+            if (nameOnly.Contains('/') || nameOnly.Contains('\\')) return null;
+            return nameOnly;
+        }
+
+        public bool TryResolveSound(string userInput, out Sound sound)
+        {
+            sound = null;
+            var normalized = NormalizeInputName(userInput);
+            if (string.IsNullOrWhiteSpace(normalized)) return false;
+
+            List<Sound> snapshot;
+            lock (_sounds)
+            {
+                snapshot = _sounds.Values.ToList();
+            }
+
+            // Exact name match first
+            sound = snapshot.FirstOrDefault(s => string.Equals(s.Name, normalized, StringComparison.OrdinalIgnoreCase));
+            if (sound != null) return true;
+
+            // If user omitted category prefix, match by suffix (unique)
+            var suffixMatches = snapshot.Where(s => s.Name.EndsWith("_" + normalized, StringComparison.OrdinalIgnoreCase)
+                                                 || string.Equals(Path.GetFileNameWithoutExtension(s.Path), normalized, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (suffixMatches.Count == 1)
+            {
+                sound = suffixMatches[0];
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool DeleteSound(Sound sound)
+        {
+            if (sound == null) return false;
+            try
+            {
+                // Remove from index first
+                lock (_sounds)
+                {
+                    _sounds.Remove(sound.Name);
+                }
+                try { sound.CachedStream?.Dispose(); } catch { }
+                // Delete file on disk
+                if (File.Exists(sound.Path))
+                {
+                    File.Delete(sound.Path);
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DeleteSound error: {ex.Message}");
+                return false;
+            }
+        }
+
+        public bool RenameSound(Sound sound, string newBaseName)
+        {
+            if (sound == null) return false;
+            var normalized = NormalizeInputName(newBaseName);
+            if (string.IsNullOrWhiteSpace(normalized)) return false;
+
+            // Compute new target path/name
+            var dir = Path.GetDirectoryName(sound.Path);
+            var ext = Path.GetExtension(sound.Path);
+            var newName = normalized;
+            // Avoid accidental double extensions
+            if (newName.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                newName = Path.GetFileNameWithoutExtension(newName);
+            var targetPath = Path.Combine(dir, newName + ext);
+
+            // Ensure no conflict with existing indexed sounds
+            lock (_sounds)
+            {
+                if (_sounds.ContainsKey(newName))
+                {
+                    return false; // duplicate name
+                }
+            }
+
+            try
+            {
+                // Move file on disk
+                if (File.Exists(targetPath))
+                {
+                    return false; // file exists
+                }
+                File.Move(sound.Path, targetPath);
+
+                // Update index: remove old, load new
+                lock (_sounds)
+                {
+                    _sounds.Remove(sound.Name);
+                }
+                try { sound.CachedStream?.Dispose(); } catch { }
+                LoadSound(targetPath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"RenameSound error: {ex.Message}");
+                return false;
             }
         }
     }
