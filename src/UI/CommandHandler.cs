@@ -15,6 +15,22 @@ namespace disboard
         private const int MaxCategoriesPerPage = 24;
         private const int MaxSoundsPerPage = 24;
 
+        // --- Add flow state ---
+        private enum AddMethod { None, Upload, YouTube }
+        private enum AddStage { None, SelectingMethod, AwaitingAttachment, AwaitingNameForUpload, AwaitingYouTubeUrl, AwaitingStart, AwaitingEnd, ProcessingYouTube, AwaitingNameForYouTube }
+        private class AddFlow
+        {
+            public ulong UserId { get; init; }
+            public AddMethod Method { get; set; } = AddMethod.None;
+            public AddStage Stage { get; set; } = AddStage.None;
+            public string TempFilePath { get; set; }
+            public string YoutubeUrl { get; set; }
+            public TimeSpan? Start { get; set; }
+            public TimeSpan? End { get; set; }
+            public string PendingExtension { get; set; }
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, AddFlow> _addFlows = new();
+
         public CommandHandler(SoundService soundService)
         {
             _soundService = soundService;
@@ -33,6 +49,35 @@ namespace disboard
                 try
                 {
                     var id = component.Data.CustomId;
+                    // --- Add flow buttons ---
+                    if (id.StartsWith("add_upload:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        var flow = _addFlows.AddOrUpdate(component.User.Id, uid => new AddFlow { UserId = uid }, (uid, existing) => existing);
+                        flow.Method = AddMethod.Upload;
+                        flow.Stage = AddStage.AwaitingAttachment;
+                        await component.UpdateAsync(m =>
+                        {
+                            m.Content = "Please upload your MP3 or WAV as an attachment in this DM.";
+                            m.Components = new ComponentBuilder().Build();
+                        });
+                        return;
+                    }
+                    if (id.StartsWith("add_youtube:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        var flow = _addFlows.AddOrUpdate(component.User.Id, uid => new AddFlow { UserId = uid }, (uid, existing) => existing);
+                        flow.Method = AddMethod.YouTube;
+                        flow.Stage = AddStage.AwaitingYouTubeUrl;
+                        await component.UpdateAsync(m =>
+                        {
+                            m.Content = "Please send the YouTube link for the audio.";
+                            m.Components = new ComponentBuilder().Build();
+                        });
+                        return;
+                    }
                     if (id.StartsWith("category_"))
                     {
                         var category = id.Substring("category_".Length);
@@ -249,6 +294,161 @@ namespace disboard
                     Console.WriteLine(ex.StackTrace);
                 }
             };
+
+            // Handle DM messages for add flow
+            client.MessageReceived += async rawMsg =>
+            {
+                try
+                {
+                    if (rawMsg is not SocketUserMessage msg) return;
+                    if (msg.Author.IsBot) return;
+                    if (msg.Channel is not IDMChannel) return;
+                    var userId = msg.Author.Id;
+                    if (!_addFlows.TryGetValue(userId, out var flow)) return;
+
+                    // Ignore command invocations here; only flow responses
+                    if (msg.Content != null && msg.Content.StartsWith("!")) return;
+
+                    switch (flow.Stage)
+                    {
+                        case AddStage.AwaitingAttachment:
+                        {
+                            if (msg.Attachments == null || msg.Attachments.Count == 0)
+                            {
+                                await msg.Channel.SendMessageAsync("No attachment detected. Please upload an MP3 or WAV file.");
+                                return;
+                            }
+                            var att = msg.Attachments.First();
+                            var ext = System.IO.Path.GetExtension(att.Filename).ToLowerInvariant();
+                            if (ext != ".mp3" && ext != ".wav")
+                            {
+                                await msg.Channel.SendMessageAsync("Unsupported file type. Please upload an MP3 or WAV file.");
+                                return;
+                            }
+                            try
+                            {
+                                var tempPath = $"/tmp/addflow_{userId}{ext}";
+                                using var http = new System.Net.Http.HttpClient();
+                                var bytes = await http.GetByteArrayAsync(att.Url);
+                                await File.WriteAllBytesAsync(tempPath, bytes);
+                                flow.TempFilePath = tempPath;
+                                flow.PendingExtension = ext;
+                                flow.Stage = AddStage.AwaitingNameForUpload;
+                                await msg.Channel.SendMessageAsync("Got it. What should I name this sound? Reminder: use category_soundname (no extension).");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Add upload download error: {ex.Message}");
+                                await msg.Channel.SendMessageAsync("I couldn't download that attachment. Please try again.");
+                            }
+                            break;
+                        }
+                        case AddStage.AwaitingNameForUpload:
+                        {
+                            var name = (msg.Content ?? string.Empty).Trim();
+                            if (!IsValidSoundName(name, out var reason))
+                            {
+                                await msg.Channel.SendMessageAsync($"Invalid name: {reason}. Please send a name like category_sound.");
+                                return;
+                            }
+                            var finalPath = System.IO.Path.Combine("/sounds", name + flow.PendingExtension);
+                            if (System.IO.File.Exists(finalPath))
+                            {
+                                await msg.Channel.SendMessageAsync("A sound with that name already exists. Choose a different name.");
+                                return;
+                            }
+                            try
+                            {
+                                System.IO.File.Move(flow.TempFilePath, finalPath);
+                                _soundService.LoadSound(finalPath);
+                                CleanupFlow(userId);
+                                await msg.Channel.SendMessageAsync($"Added sound '{name}'.");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Finalize upload error: {ex.Message}");
+                                await msg.Channel.SendMessageAsync("Failed to save the file. Please try again.");
+                            }
+                            break;
+                        }
+                        case AddStage.AwaitingYouTubeUrl:
+                        {
+                            var url = (msg.Content ?? string.Empty).Trim();
+                            if (!IsLikelyYoutubeUrl(url))
+                            {
+                                await msg.Channel.SendMessageAsync("Please send a valid YouTube URL.");
+                                return;
+                            }
+                            flow.YoutubeUrl = url;
+                            flow.Stage = AddStage.AwaitingStart;
+                            await msg.Channel.SendMessageAsync("Start time? You can use seconds (e.g. 12.5) or HH:MM:SS(.ms)");
+                            break;
+                        }
+                        case AddStage.AwaitingStart:
+                        {
+                            if (!TryParseTime(msg.Content?.Trim(), out var start))
+                            {
+                                await msg.Channel.SendMessageAsync("Couldn't parse that time. Use seconds or HH:MM:SS(.ms)");
+                                return;
+                            }
+                            flow.Start = start;
+                            flow.Stage = AddStage.AwaitingEnd;
+                            await msg.Channel.SendMessageAsync("End time?");
+                            break;
+                        }
+                        case AddStage.AwaitingEnd:
+                        {
+                            if (!TryParseTime(msg.Content?.Trim(), out var end))
+                            {
+                                await msg.Channel.SendMessageAsync("Couldn't parse that time. Use seconds or HH:MM:SS(.ms)");
+                                return;
+                            }
+                            if (!flow.Start.HasValue || end <= flow.Start.Value)
+                            {
+                                await msg.Channel.SendMessageAsync("End must be greater than start.");
+                                return;
+                            }
+                            flow.End = end;
+                            flow.Stage = AddStage.ProcessingYouTube;
+                            await msg.Channel.SendMessageAsync("Downloading and clipping... this may take a moment.");
+                            _ = ProcessYouTubeAsync(msg, flow);
+                            break;
+                        }
+                        case AddStage.AwaitingNameForYouTube:
+                        {
+                            var name = (msg.Content ?? string.Empty).Trim();
+                            if (!IsValidSoundName(name, out var reason))
+                            {
+                                await msg.Channel.SendMessageAsync($"Invalid name: {reason}. Please send a name like category_sound.");
+                                return;
+                            }
+                            var finalPath = System.IO.Path.Combine("/sounds", name + ".mp3");
+                            if (System.IO.File.Exists(finalPath))
+                            {
+                                await msg.Channel.SendMessageAsync("A sound with that name already exists. Choose a different name.");
+                                return;
+                            }
+                            try
+                            {
+                                System.IO.File.Move(flow.TempFilePath, finalPath);
+                                _soundService.LoadSound(finalPath);
+                                CleanupFlow(userId);
+                                await msg.Channel.SendMessageAsync($"Added sound '{name}'.");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Finalize yt name error: {ex.Message}");
+                                await msg.Channel.SendMessageAsync("Failed to save the snippet. Please try again.");
+                            }
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Add flow DM handler error: {ex.Message}");
+                }
+            };
         }
 
         [Command("add")]
@@ -256,7 +456,30 @@ namespace disboard
         {
             if (Context.Message.Attachments.Count == 0)
             {
-                await ReplyAsync("Please attach a file.");
+                // Start DM-based add flow
+                var dm = await Context.User.CreateDMChannelAsync();
+                var flow = new AddFlow { UserId = Context.User.Id, Method = AddMethod.None, Stage = AddStage.SelectingMethod };
+                _addFlows.AddOrUpdate(flow.UserId, flow, (uid, existing) => flow);
+
+                var builder = new ComponentBuilder()
+                    .WithButton(new ButtonBuilder
+                    {
+                        Label = "Upload a file",
+                        CustomId = $"add_upload:{Context.User.Id}",
+                        Style = ButtonStyle.Primary
+                    })
+                    .WithButton(new ButtonBuilder
+                    {
+                        Label = "Add from YouTube",
+                        CustomId = $"add_youtube:{Context.User.Id}",
+                        Style = ButtonStyle.Secondary
+                    });
+
+                await dm.SendMessageAsync("How would you like to add a sound?", components: builder.Build());
+                if (Context.Guild != null)
+                {
+                    await ReplyAsync("I DM’d you to continue adding a sound.");
+                }
                 return;
             }
 
@@ -297,6 +520,147 @@ namespace disboard
             if (Context.Guild != null)
             {
                 await ReplyAsync("I messaged you to continue the delete.");
+            }
+        }
+
+        // --- Helpers for add flow ---
+        private static bool TryParseTime(string input, out TimeSpan value)
+        {
+            value = TimeSpan.Zero;
+            if (string.IsNullOrWhiteSpace(input)) return false;
+            input = input.Trim();
+            // If simple number, interpret as seconds (can be float)
+            if (double.TryParse(input, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs))
+            {
+                if (secs < 0) return false;
+                value = TimeSpan.FromSeconds(secs);
+                return true;
+            }
+            // Try HH:MM:SS(.ms) or MM:SS(.ms)
+            var parts = input.Split(':');
+            if (parts.Length == 2 || parts.Length == 3)
+            {
+                double h = 0, m = 0, s = 0;
+                if (parts.Length == 3)
+                {
+                    if (!double.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out h)) return false;
+                    if (!double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out m)) return false;
+                    if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out s)) return false;
+                }
+                else
+                {
+                    if (!double.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out m)) return false;
+                    if (!double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out s)) return false;
+                }
+                if (m < 0 || s < 0 || h < 0) return false;
+                value = TimeSpan.FromSeconds(h * 3600 + m * 60 + s);
+                return true;
+            }
+            return false;
+        }
+
+        private static bool IsLikelyYoutubeUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            return url.Contains("youtube.com/") || url.Contains("youtu.be/");
+        }
+
+        private static bool IsValidSoundName(string name, out string reason)
+        {
+            reason = null;
+            if (string.IsNullOrWhiteSpace(name)) { reason = "empty"; return false; }
+            if (!name.Contains('_')) { reason = "missing category_ prefix"; return false; }
+            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { reason = "invalid characters"; return false; }
+            if (name.Contains('/') || name.Contains('\\')) { reason = "invalid path separators"; return false; }
+            return true;
+        }
+
+        private static void CleanupFlow(ulong userId)
+        {
+            if (_addFlows.TryRemove(userId, out var flow))
+            {
+                try
+                {
+                    if (!string.IsNullOrEmpty(flow.TempFilePath) && System.IO.File.Exists(flow.TempFilePath))
+                    {
+                        System.IO.File.Delete(flow.TempFilePath);
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private async Task ProcessYouTubeAsync(SocketUserMessage msg, AddFlow flow)
+        {
+            try
+            {
+                var userId = flow.UserId;
+                var basePath = $"/tmp/addflow_{userId}";
+                var downloadPath = basePath + ".mp3";
+                var clipPath = basePath + "_clip.mp3";
+
+                // Download audio using yt-dlp
+                var ytdlp = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "yt-dlp",
+                    ArgumentList = {
+                        "-x", "--audio-format", "mp3",
+                        "-f", "bestaudio/best",
+                        "--no-playlist",
+                        "--no-progress",
+                        "-R", "5", "--fragment-retries", "10",
+                        "-o", downloadPath,
+                        flow.YoutubeUrl
+                    },
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                var p1 = System.Diagnostics.Process.Start(ytdlp);
+                var stderr1 = await p1.StandardError.ReadToEndAsync();
+                await p1.WaitForExitAsync();
+                if (p1.ExitCode != 0 || !System.IO.File.Exists(downloadPath))
+                {
+                    Console.WriteLine($"yt-dlp failed: {stderr1}");
+                    await msg.Channel.SendMessageAsync("Failed to download audio from YouTube. Please check the link and try again.");
+                    CleanupFlow(userId);
+                    return;
+                }
+
+                // Clip with ffmpeg
+                var ss = flow.Start.Value.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var to = flow.End.Value.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var ff = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    ArgumentList = { "-y", "-ss", ss, "-to", to, "-i", downloadPath, "-ac", "2", "-ar", "48000", "-b:a", "192k", clipPath },
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                var p2 = System.Diagnostics.Process.Start(ff);
+                var stderr2 = await p2.StandardError.ReadToEndAsync();
+                await p2.WaitForExitAsync();
+                if (p2.ExitCode != 0 || !System.IO.File.Exists(clipPath))
+                {
+                    Console.WriteLine($"ffmpeg clip failed: {stderr2}");
+                    await msg.Channel.SendMessageAsync("Failed to clip the audio segment. Please try different timecodes.");
+                    try { if (System.IO.File.Exists(downloadPath)) System.IO.File.Delete(downloadPath); } catch { }
+                    CleanupFlow(userId);
+                    return;
+                }
+
+                try { if (System.IO.File.Exists(downloadPath)) System.IO.File.Delete(downloadPath); } catch { }
+
+                flow.TempFilePath = clipPath;
+                flow.Stage = AddStage.AwaitingNameForYouTube;
+                await msg.Channel.SendMessageAsync("Clipped! What should I name this sound? Reminder: use category_soundname (no extension).");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ProcessYouTube error: {ex.Message}");
+                await msg.Channel.SendMessageAsync("An error occurred while processing the YouTube audio.");
+                CleanupFlow(flow.UserId);
             }
         }
 

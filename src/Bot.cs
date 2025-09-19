@@ -31,6 +31,8 @@ namespace disboard
                     GatewayIntents.Guilds |
                     GatewayIntents.GuildMessages |
                     GatewayIntents.GuildMessageReactions |
+                    GatewayIntents.DirectMessages |
+                    GatewayIntents.DirectMessageReactions |
                     GatewayIntents.GuildVoiceStates |
                     GatewayIntents.GuildMembers |
                     GatewayIntents.MessageContent,
