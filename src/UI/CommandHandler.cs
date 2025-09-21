@@ -17,7 +17,7 @@ namespace disboard
 
         // --- Add flow state ---
         private enum AddMethod { None, Upload, YouTube }
-        private enum AddStage { None, SelectingMethod, AwaitingAttachment, AwaitingNameForUpload, AwaitingYouTubeUrl, AwaitingStart, AwaitingEnd, ProcessingYouTube, AwaitingNameForYouTube }
+        private enum AddStage { None, SelectingMethod, AwaitingAttachment, AwaitingNameForUpload, AwaitingYouTubeUrl, AwaitingStart, AwaitingEnd, ProcessingYouTube, AwaitingPreviewConfirmation, AwaitingNameForYouTube }
         private class AddFlow
         {
             public ulong UserId { get; init; }
@@ -50,6 +50,51 @@ namespace disboard
                 {
                     var id = component.Data.CustomId;
                     // --- Add flow buttons ---
+                    if (id.StartsWith("yt_prev_ok:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        if (_addFlows.TryGetValue(component.User.Id, out var flow) && flow.Stage == AddStage.AwaitingPreviewConfirmation)
+                        {
+                            flow.Stage = AddStage.AwaitingNameForYouTube;
+                            await component.UpdateAsync(m =>
+                            {
+                                m.Content = "Great! What should I name this sound? Use category_sound (no extension).";
+                                m.Components = new ComponentBuilder().Build();
+                            });
+                        }
+                        return;
+                    }
+                    if (id.StartsWith("yt_prev_redo:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        if (_addFlows.TryGetValue(component.User.Id, out var flow))
+                        {
+                            // Clean temp clip if exists
+                            try { if (!string.IsNullOrEmpty(flow.TempFilePath) && System.IO.File.Exists(flow.TempFilePath)) System.IO.File.Delete(flow.TempFilePath); } catch { }
+                            flow.TempFilePath = null;
+                            flow.Stage = AddStage.AwaitingStart;
+                            await component.UpdateAsync(m =>
+                            {
+                                m.Content = "No problem. Enter a new start time (seconds or HH:MM:SS[.ms]).";
+                                m.Components = new ComponentBuilder().Build();
+                            });
+                        }
+                        return;
+                    }
+                    if (id.StartsWith("yt_prev_cancel:"))
+                    {
+                        var intendedUserId = ulong.Parse(id.Split(':')[1]);
+                        if (component.User.Id != intendedUserId) return;
+                        CleanupFlow(component.User.Id);
+                        await component.UpdateAsync(m =>
+                        {
+                            m.Content = "YouTube add cancelled.";
+                            m.Components = new ComponentBuilder().Build();
+                        });
+                        return;
+                    }
                     if (id.StartsWith("add_upload:"))
                     {
                         var intendedUserId = ulong.Parse(id.Split(':')[1]);
@@ -341,6 +386,11 @@ namespace disboard
                                 Console.WriteLine($"Add upload download error: {ex.Message}");
                                 await msg.Channel.SendMessageAsync("I couldn't download that attachment. Please try again.");
                             }
+                            break;
+                        }
+                        case AddStage.AwaitingPreviewConfirmation:
+                        {
+                            await msg.Channel.SendMessageAsync("Please use the buttons above to confirm, redo times, or cancel.");
                             break;
                         }
                         case AddStage.AwaitingNameForUpload:
@@ -653,8 +703,36 @@ namespace disboard
                 try { if (System.IO.File.Exists(downloadPath)) System.IO.File.Delete(downloadPath); } catch { }
 
                 flow.TempFilePath = clipPath;
-                flow.Stage = AddStage.AwaitingNameForYouTube;
-                await msg.Channel.SendMessageAsync("Clipped! What should I name this sound? Reminder: use category_soundname (no extension).");
+                flow.Stage = AddStage.AwaitingPreviewConfirmation;
+                var buttons = new ComponentBuilder()
+                    .WithButton(new ButtonBuilder
+                    {
+                        Label = "Approve",
+                        CustomId = $"yt_prev_ok:{userId}",
+                        Style = ButtonStyle.Success
+                    })
+                    .WithButton(new ButtonBuilder
+                    {
+                        Label = "Re-enter times",
+                        CustomId = $"yt_prev_redo:{userId}",
+                        Style = ButtonStyle.Primary
+                    })
+                    .WithButton(new ButtonBuilder
+                    {
+                        Label = "Cancel",
+                        CustomId = $"yt_prev_cancel:{userId}",
+                        Style = ButtonStyle.Secondary
+                    });
+
+                try
+                {
+                    await msg.Channel.SendFileAsync(clipPath, text: "Preview your clip. Approve or re-enter times:", components: buttons.Build());
+                }
+                catch (Exception attachEx)
+                {
+                    Console.WriteLine($"Send preview failed: {attachEx.Message}");
+                    await msg.Channel.SendMessageAsync("Clipped! I couldn't attach the file (possibly too large). You can still Approve or Re-enter times:", components: buttons.Build());
+                }
             }
             catch (Exception ex)
             {

@@ -67,7 +67,27 @@ The bot uses a JSON configuration file located at config.json. Here is an exampl
 - Send the command `!soundboard` in a text channel the bot can see.
 - Use the button interface to play sounds by clicking the corresponding buttons.
 
-Optional: You can upload new sounds with `!add` by attaching an `.mp3` or `.wav` file; the bot saves and indexes it automatically.
+Optional: You can add new sounds with `!add` via two methods:
+
+1) Upload: attach an `.mp3` or `.wav` and the bot saves and indexes it.
+2) YouTube: the bot DMs you to collect a link and times, clips the audio, sends a preview for approval, then saves once you name it.
+
+Details below.
+
+### Add Sounds
+
+Start with `!add`.
+
+- In a DM, choose:
+  - Upload a file: send an `.mp3` or `.wav`. Then provide a name like `category_sound` (no extension).
+  - Add from YouTube: send a YouTube URL, then:
+    - Enter start time and end time (formats: seconds like `12.5` or `HH:MM:SS(.ms)` like `0:32.250`).
+    - The bot downloads and clips the audio, then sends you the clip to preview.
+    - Approve to proceed to naming, Re-enter times to try again, or Cancel to abort.
+
+Notes:
+- Names must be `category_sound` and must not include an extension.
+- If Discord refuses the preview attachment (too large), the bot still shows Approve/Redo/Cancel buttons.
 
 ### File Management
 
@@ -86,6 +106,7 @@ Notes:
 
 - Button-based UI for easy sound playback.
 - Supports multiple sound files.
+- Add from YouTube with preview confirmation and naming flow in DMs.
 - Configurable inactivity timeout.
 - Configurable voice channel timeout.
 - Configurable command prefix.
