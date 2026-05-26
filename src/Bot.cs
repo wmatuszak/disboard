@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -77,6 +78,8 @@ namespace disboard
             SoundService.LoadSounds("/sounds");
 
             await _commands.AddModuleAsync<CommandHandler>(_services);
+            var commandHandler = _services.GetRequiredService<CommandHandler>();
+            commandHandler.RegisterComponentHandlers(_client);
 
             // Log loaded sounds
             foreach (var sound in SoundService.GetAllSounds())
@@ -107,9 +110,6 @@ namespace disboard
                 {
                     Console.WriteLine($"Lavalink connect error: {ex.Message}");
                 }
-
-                var commandHandler = _services.GetRequiredService<CommandHandler>();
-                commandHandler.RegisterComponentHandlers(_client);
             };
 
             _client.Disconnected += async ex =>
@@ -128,41 +128,72 @@ namespace disboard
             // Disconnect from voice channel after a period of inactivity (non-blocking)
             _client.UserVoiceStateUpdated += (user, before, after) =>
             {
-                var guild = before.VoiceChannel?.Guild;
-                if (guild != null && after.VoiceChannel == null)
+                var guild = before.VoiceChannel?.Guild ?? after.VoiceChannel?.Guild;
+                if (guild == null)
                 {
-                    // Cancel any existing timer for this guild
+                    return Task.CompletedTask;
+                }
+
+                var botVoiceChannel = (guild.CurrentUser as SocketGuildUser)?.VoiceChannel;
+                if (botVoiceChannel == null)
+                {
                     if (_disconnectTimers.TryRemove(guild.Id, out var existingCts))
                     {
                         try { existingCts.Cancel(); } catch { }
                         existingCts.Dispose();
                     }
-
-                    var cts = new System.Threading.CancellationTokenSource();
-                    _disconnectTimers[guild.Id] = cts;
-
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await Task.Delay(TimeSpan.FromMinutes(_config.VoiceChannelTimeoutMinutes), cts.Token);
-                            if (!cts.IsCancellationRequested && !SoundService.IsPlaying(guild))
-                            {
-                                await SoundService.DisconnectFromGuildAsync(guild);
-                            }
-                        }
-                        catch (TaskCanceledException) { }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Voice idle disconnect timer error: {ex.Message}");
-                        }
-                        finally
-                        {
-                            _disconnectTimers.TryRemove(guild.Id, out _);
-                            cts.Dispose();
-                        }
-                    });
+                    return Task.CompletedTask;
                 }
+
+                var hasHumanListeners = botVoiceChannel.Users.Any(u => !u.IsBot);
+                if (hasHumanListeners)
+                {
+                    if (_disconnectTimers.TryRemove(guild.Id, out var existingCts))
+                    {
+                        try { existingCts.Cancel(); } catch { }
+                        existingCts.Dispose();
+                    }
+                    return Task.CompletedTask;
+                }
+
+                if (_config.VoiceChannelTimeoutMinutes <= 0)
+                {
+                    return Task.CompletedTask;
+                }
+
+                if (_disconnectTimers.TryRemove(guild.Id, out var previousCts))
+                {
+                    try { previousCts.Cancel(); } catch { }
+                    previousCts.Dispose();
+                }
+
+                var cts = new System.Threading.CancellationTokenSource();
+                _disconnectTimers[guild.Id] = cts;
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromMinutes(_config.VoiceChannelTimeoutMinutes), cts.Token);
+
+                        var currentBotVoiceChannel = (guild.CurrentUser as SocketGuildUser)?.VoiceChannel;
+                        var currentHasHumanListeners = currentBotVoiceChannel?.Users.Any(u => !u.IsBot) == true;
+                        if (!cts.IsCancellationRequested && !SoundService.IsPlaying(guild) && !currentHasHumanListeners)
+                        {
+                            await SoundService.DisconnectFromGuildAsync(guild);
+                        }
+                    }
+                    catch (TaskCanceledException) { }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Voice idle disconnect timer error: {ex.Message}");
+                    }
+                    finally
+                    {
+                        _disconnectTimers.TryRemove(guild.Id, out _);
+                        cts.Dispose();
+                    }
+                });
 
                 return Task.CompletedTask;
             };

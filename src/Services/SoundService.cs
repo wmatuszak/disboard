@@ -16,13 +16,18 @@ namespace disboard
 {
     public class SoundService
     {
+        private sealed class GuildPlaybackState
+        {
+            public ConcurrentQueue<(SocketGuild Guild, SocketUser User, string SoundName)> Queue { get; } = new();
+            public SemaphoreSlim QueueSemaphore { get; } = new(1, 1);
+            public bool IsProcessing { get; set; }
+        }
+
         private readonly Dictionary<string, Sound> _sounds;
         private readonly DiscordSocketClient _client;
-        private readonly ConcurrentQueue<(SocketGuild, SocketUser, string)> _soundQueue;
-        private readonly SemaphoreSlim _queueSemaphore;
+        private readonly ConcurrentDictionary<ulong, GuildPlaybackState> _playbackStates;
         private readonly Dictionary<ulong, bool> _playingSounds;
         private readonly ConcurrentDictionary<ulong, IAudioClient> _audioClients;
-        private bool _isPlaying;
         private readonly SemaphoreSlim _voiceConnectSemaphore = new(1, 1);
         private readonly Victoria.LavaNode<Victoria.LavaPlayer<Victoria.LavaTrack>, Victoria.LavaTrack> _lavaNode;
         private readonly BotConfig _config;
@@ -33,11 +38,9 @@ namespace disboard
             _lavaNode = lavaNode;
             _config = config;
             _sounds = new Dictionary<string, Sound>();
-            _soundQueue = new ConcurrentQueue<(SocketGuild, SocketUser, string)>();
-            _queueSemaphore = new SemaphoreSlim(1, 1);
+            _playbackStates = new ConcurrentDictionary<ulong, GuildPlaybackState>();
             _playingSounds = new Dictionary<ulong, bool>();
             _audioClients = new ConcurrentDictionary<ulong, IAudioClient>();
-            _isPlaying = false;
         }
 
         public void LoadSounds(string directory = "/sounds")
@@ -108,25 +111,26 @@ namespace disboard
 
         public void EnqueueSound(SocketGuild guild, SocketUser user, string soundName)
         {
-            if (_client == null || guild == null || user == null || !_sounds.ContainsKey(soundName))
+            if (_client == null || guild == null || user == null || !TryGetSound(soundName, out _))
                 return;
 
-            _soundQueue.Enqueue((guild, user, soundName));
-            ProcessQueue();
+            var playbackState = _playbackStates.GetOrAdd(guild.Id, _ => new GuildPlaybackState());
+            playbackState.Queue.Enqueue((guild, user, soundName));
+            _ = ProcessQueueAsync(playbackState);
         }
 
-        private async void ProcessQueue()
+        private async Task ProcessQueueAsync(GuildPlaybackState playbackState)
         {
-            await _queueSemaphore.WaitAsync();
+            await playbackState.QueueSemaphore.WaitAsync();
 
             try
             {
-                if (_isPlaying)
+                if (playbackState.IsProcessing)
                     return;
 
-                _isPlaying = true;
+                playbackState.IsProcessing = true;
 
-                while (_soundQueue.TryDequeue(out var item))
+                while (playbackState.Queue.TryDequeue(out var item))
                 {
                     var (guild, user, soundName) = item;
                     try
@@ -138,18 +142,21 @@ namespace disboard
                         Console.WriteLine($"PlaySoundAsync error: {ex.Message}");
                     }
                 }
-
-                _isPlaying = false;
             }
             finally
             {
-                _queueSemaphore.Release();
+                playbackState.IsProcessing = false;
+                playbackState.QueueSemaphore.Release();
             }
         }
 
         private async Task PlaySoundAsync(SocketGuild guild, SocketUser user, string soundName)
         {
-            var sound = _sounds[soundName];
+            if (!TryGetSound(soundName, out var sound))
+            {
+                return;
+            }
+
             // Use Lavalink path if available
             if (_lavaNode != null)
             {
@@ -293,6 +300,14 @@ namespace disboard
                 {
                     SetPlaying(guild, false);
                 }
+            }
+        }
+
+        private bool TryGetSound(string soundName, out Sound sound)
+        {
+            lock (_sounds)
+            {
+                return _sounds.TryGetValue(soundName, out sound);
             }
         }
 

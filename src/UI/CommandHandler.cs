@@ -152,13 +152,13 @@ namespace disboard
                         var mb = new ModalBuilder()
                             .WithTitle("Delete Sound")
                             .WithCustomId($"del_modal:{intendedUserId}")
-                            .AddTextInput(new TextInputBuilder()
-                                .WithCustomId("filename")
-                                .WithLabel("Sound name (no extension)")
-                                .WithStyle(TextInputStyle.Short)
-                                .WithPlaceholder("e.g. memes_airhorn")
-                                .WithRequired(true)
-                                .WithMaxLength(128));
+                            .AddTextInput(
+                                "Sound name (no extension)",
+                                "filename",
+                                TextInputStyle.Short,
+                                "e.g. memes_airhorn",
+                                maxLength: 128,
+                                required: true);
                         await component.RespondWithModalAsync(mb.Build());
                     }
                     else if (id.StartsWith("del_confirm:"))
@@ -203,13 +203,13 @@ namespace disboard
                         var mb = new ModalBuilder()
                             .WithTitle("Rename Sound — Pick File")
                             .WithCustomId($"ren_old_modal:{intendedUserId}")
-                            .AddTextInput(new TextInputBuilder()
-                                .WithCustomId("oldname")
-                                .WithLabel("Existing sound (no extension)")
-                                .WithStyle(TextInputStyle.Short)
-                                .WithPlaceholder("e.g. memes_airhorn")
-                                .WithRequired(true)
-                                .WithMaxLength(128));
+                            .AddTextInput(
+                                "Existing sound (no extension)",
+                                "oldname",
+                                TextInputStyle.Short,
+                                "e.g. memes_airhorn",
+                                maxLength: 128,
+                                required: true);
                         await component.RespondWithModalAsync(mb.Build());
                     }
                     else if (id.StartsWith("ren_new_button:"))
@@ -222,13 +222,13 @@ namespace disboard
                         var mb = new ModalBuilder()
                             .WithTitle($"Rename '{resolvedName}'")
                             .WithCustomId($"ren_new_modal:{intendedUserId}:{resolvedName}")
-                            .AddTextInput(new TextInputBuilder()
-                                .WithCustomId("newname")
-                                .WithLabel("New name (no extension)")
-                                .WithStyle(TextInputStyle.Short)
-                                .WithPlaceholder("e.g. memes_airhorn2")
-                                .WithRequired(true)
-                                .WithMaxLength(128));
+                            .AddTextInput(
+                                "New name (no extension)",
+                                "newname",
+                                TextInputStyle.Short,
+                                "e.g. memes_airhorn2",
+                                maxLength: 128,
+                                required: true);
                         await component.RespondWithModalAsync(mb.Build());
                     }
                 }
@@ -535,6 +535,7 @@ namespace disboard
 
             var attachment = Context.Message.Attachments.First();
             var fileExtension = Path.GetExtension(attachment.Filename).ToLower();
+            var soundName = Path.GetFileNameWithoutExtension(attachment.Filename).Trim();
 
             if (fileExtension != ".mp3" && fileExtension != ".wav")
             {
@@ -542,7 +543,18 @@ namespace disboard
                 return;
             }
 
-            var filePath = Path.Combine("/sounds", attachment.Filename);
+            if (!IsValidSoundName(soundName, out var reason))
+            {
+                await ReplyAsync($"Invalid file name: {reason}. Use a filename like `category_sound.mp3`.");
+                return;
+            }
+
+            var filePath = Path.Combine("/sounds", soundName + fileExtension);
+            if (System.IO.File.Exists(filePath))
+            {
+                await ReplyAsync("A sound with that name already exists. Choose a different file name.");
+                return;
+            }
 
             using (var client = new System.Net.Http.HttpClient())
             {
@@ -552,7 +564,7 @@ namespace disboard
 
             _soundService.LoadSound(filePath);
 
-            await ReplyAsync($"Sound {attachment.Filename} added successfully.");
+            await ReplyAsync($"Sound {soundName} added successfully.");
         }
 
         [Command("delete"), Alias("rm", "remove")]
