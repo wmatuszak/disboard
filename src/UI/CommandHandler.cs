@@ -12,6 +12,7 @@ namespace disboard
     public class CommandHandler : ModuleBase<SocketCommandContext>
     {
         private readonly SoundService _soundService;
+        private readonly AudioProcessingService _audioProcessingService;
         private const int MaxCategoriesPerPage = 24;
         private const int MaxSoundsPerPage = 24;
 
@@ -31,9 +32,10 @@ namespace disboard
         }
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, AddFlow> _addFlows = new();
 
-        public CommandHandler(SoundService soundService)
+        public CommandHandler(SoundService soundService, AudioProcessingService audioProcessingService)
         {
             _soundService = soundService;
+            _audioProcessingService = audioProcessingService;
         }
 
         [Command("soundboard"), Alias("sb", "sound")]
@@ -376,6 +378,7 @@ namespace disboard
                                 using var http = new System.Net.Http.HttpClient();
                                 var bytes = await http.GetByteArrayAsync(att.Url);
                                 await File.WriteAllBytesAsync(tempPath, bytes);
+                                await NormalizeImportedSoundAsync(tempPath, createBackup: false);
                                 flow.TempFilePath = tempPath;
                                 flow.PendingExtension = ext;
                                 flow.Stage = AddStage.AwaitingNameForUpload;
@@ -410,6 +413,7 @@ namespace disboard
                             try
                             {
                                 System.IO.File.Move(flow.TempFilePath, finalPath);
+                                await NormalizeImportedSoundAsync(finalPath);
                                 _soundService.LoadSound(finalPath);
                                 CleanupFlow(userId);
                                 await msg.Channel.SendMessageAsync($"Added sound '{name}'.");
@@ -481,6 +485,7 @@ namespace disboard
                             try
                             {
                                 System.IO.File.Move(flow.TempFilePath, finalPath);
+                                await NormalizeImportedSoundAsync(finalPath);
                                 _soundService.LoadSound(finalPath);
                                 CleanupFlow(userId);
                                 await msg.Channel.SendMessageAsync($"Added sound '{name}'.");
@@ -562,7 +567,29 @@ namespace disboard
                 await File.WriteAllBytesAsync(filePath, fileBytes);
             }
 
-            _soundService.LoadSound(filePath);
+            try
+            {
+                await NormalizeImportedSoundAsync(filePath);
+                _soundService.LoadSound(filePath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Direct add normalization error: {ex.Message}");
+                try
+                {
+                    if (System.IO.File.Exists(filePath))
+                    {
+                        System.IO.File.Delete(filePath);
+                    }
+                }
+                catch
+                {
+                    // ignore cleanup failure
+                }
+
+                await ReplyAsync("I couldn't finish processing that sound. Please try again.");
+                return;
+            }
 
             await ReplyAsync($"Sound {soundName} added successfully.");
         }
@@ -652,6 +679,16 @@ namespace disboard
             }
         }
 
+        private async Task NormalizeImportedSoundAsync(string path, bool createBackup = true)
+        {
+            if (_audioProcessingService?.ShouldNormalize != true)
+            {
+                return;
+            }
+
+            await _audioProcessingService.NormalizeInPlaceAsync(path, createBackup);
+        }
+
         private async Task ProcessYouTubeAsync(SocketUserMessage msg, AddFlow flow)
         {
             try
@@ -714,6 +751,7 @@ namespace disboard
 
                 try { if (System.IO.File.Exists(downloadPath)) System.IO.File.Delete(downloadPath); } catch { }
 
+                await NormalizeImportedSoundAsync(clipPath, createBackup: false);
                 flow.TempFilePath = clipPath;
                 flow.Stage = AddStage.AwaitingPreviewConfirmation;
                 var buttons = new ComponentBuilder()

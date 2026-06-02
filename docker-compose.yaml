@@ -8,6 +8,7 @@ services:
     volumes:
       - /games/soundboard/sounds:/sounds
       - /games/soundboard/config:/config
+      - /games/soundboard/sound-backups:/sound-backups
     depends_on:
       - lavalink
       - sounds

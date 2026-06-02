@@ -67,9 +67,11 @@ namespace disboard
                         sp.GetRequiredService<Victoria.Configuration>(),
                         sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Victoria.LavaNode<Victoria.LavaPlayer<Victoria.LavaTrack>, Victoria.LavaTrack>>>()
                     ))
+                .AddSingleton(new AudioProcessingService(_config))
                 .AddSingleton<SoundService>(sp => new SoundService(
                     _client,
                     sp.GetService<Victoria.LavaNode<Victoria.LavaPlayer<Victoria.LavaTrack>, Victoria.LavaTrack>>(),
+                    sp.GetRequiredService<AudioProcessingService>(),
                     _config))
                 .AddSingleton<CommandHandler>()
                 .BuildServiceProvider();

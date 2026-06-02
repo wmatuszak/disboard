@@ -55,7 +55,13 @@ The bot uses a JSON configuration file located at config.json. Here is an exampl
     "InactivityTimeoutSeconds": 60,
     "VoiceChannelTimeoutMinutes": 10,
     "CommandPrefix": "!",
-    "Activity": "Playing sounds"
+    "Activity": "Playing sounds",
+    "NormalizeOnImport": true,
+    "LoudnessTarget": -16.0,
+    "LoudnessRangeTarget": 11.0,
+    "TruePeakLimit": -1.5,
+    "PlaybackVolumePercent": 100,
+    "NormalizationBackupDirectory": "/sound-backups"
 }
 ```
 
@@ -88,6 +94,8 @@ Start with `!add`.
 Notes:
 - Names must be `category_sound` and must not include an extension.
 - If Discord refuses the preview attachment (too large), the bot still shows Approve/Redo/Cancel buttons.
+- When `NormalizeOnImport` is enabled, uploads and YouTube clips are normalized with `ffmpeg` before they are saved.
+- Before a finalized library sound is replaced during normalization, the original file is copied into `NormalizationBackupDirectory`.
 
 ### File Management
 
@@ -101,6 +109,23 @@ Notes:
 ## Lavalink Notes
 - The bot streams local files by URL via the `sounds` service. Ensure `SoundBaseUrl` in `config/config.json` matches the compose service (default `http://sounds`).
 - Lavalink credentials and host are configured in `config/config.json` and should match `docker-compose.yaml`.
+- `PlaybackVolumePercent` applies a simple global playback gain. With Lavalink enabled, the bot applies it through the player volume; in direct Discord audio mode, it is applied in the `ffmpeg` stream filter.
+
+## Loudness Normalization
+- New uploads and YouTube clips can be normalized on import with `ffmpeg` `loudnorm`.
+- Tuning knobs live in `config/config.json`:
+  - `NormalizeOnImport`
+  - `LoudnessTarget`
+  - `LoudnessRangeTarget`
+  - `TruePeakLimit`
+  - `PlaybackVolumePercent`
+  - `NormalizationBackupDirectory`
+- Import-time backups are stored in `NormalizationBackupDirectory` with a UTC timestamp in the filename so repeated re-normalization does not overwrite earlier originals.
+- To normalize an existing sound library in place, use `scripts/normalize-sounds.sh`:
+  ```bash
+  ./scripts/normalize-sounds.sh /games/soundboard/sounds
+  ```
+- The batch script also creates backups by default. Override its backup location with `BACKUP_DIR=/your/backup/path`.
 
 ## Features
 

@@ -7,5 +7,11 @@
     "LavalinkHost": "lavalink",
     "LavalinkPort": 2333,
     "LavalinkPassword": "youshallnotpass",
-    "SoundBaseUrl": "http://sounds"
+    "SoundBaseUrl": "http://sounds",
+    "NormalizeOnImport": true,
+    "LoudnessTarget": -16.0,
+    "LoudnessRangeTarget": 11.0,
+    "TruePeakLimit": -1.5,
+    "PlaybackVolumePercent": 100,
+    "NormalizationBackupDirectory": "/sound-backups"
 }

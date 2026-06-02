@@ -30,12 +30,18 @@ namespace disboard
         private readonly ConcurrentDictionary<ulong, IAudioClient> _audioClients;
         private readonly SemaphoreSlim _voiceConnectSemaphore = new(1, 1);
         private readonly Victoria.LavaNode<Victoria.LavaPlayer<Victoria.LavaTrack>, Victoria.LavaTrack> _lavaNode;
+        private readonly AudioProcessingService _audioProcessingService;
         private readonly BotConfig _config;
 
-        public SoundService(DiscordSocketClient client, Victoria.LavaNode<Victoria.LavaPlayer<Victoria.LavaTrack>, Victoria.LavaTrack> lavaNode = null, BotConfig config = null)
+        public SoundService(
+            DiscordSocketClient client,
+            Victoria.LavaNode<Victoria.LavaPlayer<Victoria.LavaTrack>, Victoria.LavaTrack> lavaNode = null,
+            AudioProcessingService audioProcessingService = null,
+            BotConfig config = null)
         {
             _client = client;
             _lavaNode = lavaNode;
+            _audioProcessingService = audioProcessingService;
             _config = config;
             _sounds = new Dictionary<string, Sound>();
             _playbackStates = new ConcurrentDictionary<ulong, GuildPlaybackState>();
@@ -187,6 +193,10 @@ namespace disboard
 
                     var track = search.Tracks.First();
                     SetPlaying(guild, true);
+                    if (_audioProcessingService != null)
+                    {
+                        await player.SetVolumeAsync(_lavaNode, _audioProcessingService.PlaybackVolumePercent);
+                    }
                     await player.PlayAsync(_lavaNode, track);
                 }
                 catch (Exception ex)
@@ -318,11 +328,22 @@ namespace disboard
             return Process.Start(new ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                Arguments = $"-i \"{path}\" -ac 2 -f s16le -ar 48000 pipe:1",
+                Arguments = BuildStreamArguments(path),
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
+        }
+
+        private string BuildStreamArguments(string path)
+        {
+            var volumeFilter = _audioProcessingService?.BuildPlaybackFilter();
+            if (string.IsNullOrWhiteSpace(volumeFilter))
+            {
+                return $"-i \"{path}\" -ac 2 -f s16le -ar 48000 pipe:1";
+            }
+
+            return $"-i \"{path}\" -af \"{volumeFilter}\" -ac 2 -f s16le -ar 48000 pipe:1";
         }
 
         public bool IsPlaying(SocketGuild guild)
